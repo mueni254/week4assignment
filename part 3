@@ -1,0 +1,177 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+import warnings
+warnings.filterwarnings('ignore')
+
+# 1. Load the data
+
+try:
+    df = pd.read_csv('breast_cancer_dataset.csv')
+    print("Data loaded successfully!")
+except Exception as e:
+    print(f"Error loading file: {e}")
+
+# 2. Explore the data
+print(f"Dataset shape")
+print("\nFirst 5 rows:")
+print(df.head())
+print("\nData types:")
+print(df.dtypes)
+print("\nMissing values:")
+print(df.isnull().sum())
+
+# 3. Assuming 'issue_priority' is the target variables
+target_column = 'issue_priority'
+
+# Check target distribution
+print("\nTarget variable distribution:")
+print(df[target_column].value_counts())
+print(df[target_column].value_counts(normalize=True))
+
+# Visualize target distribution
+plt.figure(figsize=(10, 6))
+sns.countplot(y=df[target_column])
+plt.title('Distribution of Issue Priority')
+plt.tight_layout()
+plt.show()
+
+# 4. Prepare features and target
+X = df.drop(columns=[target_column])
+y = df[target_column]
+
+# Encode the target if it's categorical
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+print("\nTarget classes mapping:")
+for i, label in enumerate(le.classes_):
+    print(f"{label} -> {i}")
+
+# 5. Identify categorical and numerical columns
+categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+numerical_cols = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
+
+print(f"\nCategorical columns ({len(categorical_cols)}): {categorical_cols}")
+print(f"Numerical columns ({len(numerical_cols)}): {numerical_cols}")
+
+# 6. Split the data
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
+)
+print(f"\nTraining set size: {X_train.shape}")
+print(f"Testing set size: {X_test.shape}")
+
+# 7. Create preprocessing pipelines
+# Numerical pipeline
+numerical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', StandardScaler())
+])
+
+# Categorical pipeline
+categorical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
+
+# Combine preprocessing steps
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', numerical_transformer, numerical_cols),
+        ('cat', categorical_transformer, categorical_cols)
+    ]
+)
+
+# 8. Create and train the model
+model = Pipeline(steps=[
+    ('preprocessor', preprocessor),
+    ('classifier', RandomForestClassifier(n_estimators=100, random_state=42))
+])
+
+# Train the model
+print("\nTraining Random Forest model...")
+model.fit(X_train, y_train)
+print("Model training complete!")
+
+# 9. Evaluate the model
+# Make predictions
+y_pred = model.predict(X_test)
+
+# Calculate metrics
+accuracy = model.score(X_test, y_test)
+f1 = f1_score(y_test, y_pred, average='weighted')
+
+print("\nModel Evaluation:")
+print(f"Accuracy: {accuracy:.4f}")
+print(f"F1 Score (weighted): {f1:.4f}")
+
+# Detailed classification report
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred, target_names=le.classes_))
+
+# Confusion Matrix
+plt.figure(figsize=(10, 8))
+cm = confusion_matrix(y_test, y_pred)
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=le.classes_, yticklabels=le.classes_)
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix')
+plt.tight_layout()
+plt.show()
+
+# 10. Feature Importance
+if hasattr(model[-1], 'feature_importances_'):
+    # Get feature names after preprocessing
+    feature_names = []
+    
+    # Get numerical feature names (these stay the same)
+    if numerical_cols:
+        feature_names.extend(numerical_cols)
+    
+    # Get one-hot encoded feature names
+    if categorical_cols:
+        ohe = model.named_steps['preprocessor'].transformers_[1][1].named_steps['onehot']
+        cat_features = ohe.get_feature_names_out(categorical_cols)
+        feature_names.extend(cat_features)
+    
+    # Get feature importances
+    importances = model[-1].feature_importances_
+    
+    # Sort feature importances
+    indices = np.argsort(importances)[::-1]
+    
+    # Plot feature importances
+    plt.figure(figsize=(12, 8))
+    plt.title('Feature Importances')
+    plt.bar(range(len(indices[:20])), importances[indices[:20]], align='center')
+    plt.xticks(range(len(indices[:20])), [feature_names[i] for i in indices[:20]], rotation=90)
+    plt.tight_layout()
+    plt.show()
+    
+    # Print top 10 features
+    print("\nTop 10 most important features:")
+    for i in range(10):
+        if i < len(indices):
+            print(f"{i+1}. {feature_names[indices[i]]}: {importances[indices[i]]:.4f}")
+
+# 11. Cross-validation for more robust evaluation
+print("\nPerforming 5-fold cross-validation...")
+cv_scores = cross_val_score(model, X, y_encoded, cv=5, scoring='f1_weighted')
+print(f"Cross-validated F1 scores: {cv_scores}")
+print(f"Mean F1 score: {cv_scores.mean():.4f}")
+print(f"Standard deviation: {cv_scores.std():.4f}")
+
+# 12. Save the model (optional)
+import joblib
+joblib.dump(model, 'issue_priority_model.pkl')
+print("\nModel saved as 'issue_priority_model.pkl'")
+
+print("\nPreprocessing and modeling pipeline complete!")
